@@ -981,7 +981,7 @@ $$
 
 #### 4.1 偏置
 
-像平面往往采用**中心点**作为坐标系原点，但图像往往是采用**左下角**的点作为原点。假设像平面的原点在摄像机平面中是$(c_x,c_y)$，故**像平面坐标系转到摄像机平面**需要**加上偏移**：
+像平面往往采用**中心点**作为坐标系原点，但图像往往是采用**左下角**的点作为原点。假设像平面的原点在摄像机平面中是$(c_x,c_y)$，故**像平面坐标系**转到摄像机对应的**像素平面**需要加上**偏移**：
 $$
 (x,y,z)\to(f\frac{x}{z}+c_x,f\frac{y}{z}+c_y)
 $$
@@ -1082,7 +1082,11 @@ z \\
 1
 \end{bmatrix}=MP=K[I,0]P
 $$
-我们将$K=\begin{bmatrix}
+其中，$[I,0]=\begin{bmatrix}
+1 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & 0
+\end{bmatrix}$。我们将$K=\begin{bmatrix}
 \alpha & -\alpha cot\theta & c_x  \\
 0 & \frac{\beta}{sin\theta} & c_y  \\
 0 & 0 & 1 
@@ -1109,8 +1113,10 @@ x \\
 y \\
 z \\
 1
-\end{bmatrix}=[I,0]\bar{p}
+\end{bmatrix}=MP
 $$
+
+故在规范化投影下，**三维空间**的**欧式坐标**（非齐次坐标）与**像素平面**的**齐次坐标**相同。
 
 ### 5. 世界坐标系
 
@@ -1120,21 +1126,269 @@ $$
 $$
 P=RP_w+T
 $$
-其中$R$是一个**正交矩阵**，上述公式的齐次表达式为：
+其中$R$是一个**3×3**的**正交矩阵**，$T$是一个**3×1**的**向量**，$[R,T]$视为**外部参数**，反映了摄像机的相对位置，$P,P_w$**均为欧式坐标**。
+
+当$P,P_w$均为齐次坐标时，上述公式的**齐次表达式**为：
 $$
 P=
 \begin{bmatrix}
 R & T \\
 0 & 1
-\end{bmatrix}P_w
+\end{bmatrix}P_w, \quad P_w=\begin{bmatrix}
+x_w \\
+y_w \\
+z_w \\
+1
+\end{bmatrix}
 $$
 
+进一步，我们能推导出完整的摄像机模型：
 
+<img src="./assets/image-20250630235707509.png" alt="image-20250630235707509" style="zoom:80%;" />
 
+通过以下公式，可以将$P^{\prime}$转为欧式坐标：
+$$
+P^{\prime}=MP_w=
+\begin{bmatrix}
+m_1 \\
+m_2 \\
+m_3
+\end{bmatrix}P_w=
+\begin{bmatrix}
+m_1P_w \\
+m_2P_w \\
+m_3P_w
+\end{bmatrix}\to(\frac{m_1P_w}{m_3P_w},\frac{m_2P_w}{m_3P_w})
+$$
+投影矩阵$M$共有==**11个自由度**==（5个摄像机内参数 +6个摄像机外参数 =11个自由度）。
 
+### 6. 其他摄像机模型
 
+透视投影摄像机、弱透视投影摄像机（相对场景深度小于其与相机的距离）、正交投影摄像机（摄像机中心到像平面的距离无限远）。
 
+## 十二、摄像机标定
 
+**摄像机标定，即求解摄像机内、外参数矩阵**，摄像机内、外参数矩阵描述了三维世界到二维像素的映射关系。
 
+### 1. 标定问题
 
+==已知世界坐标系中$P_1,\cdots,P_n$的位置，以及图像中$p_1,\cdots,p_n$的位置，目标是计算摄像机内、外参数。==
 
+<img src="./assets/image-20250701012518971.png" alt="image-20250701012518971" style="zoom: 60%;" />
+$$
+p_i=
+\begin{bmatrix}
+u_i \\
+v_i
+\end{bmatrix}=
+\begin{bmatrix}
+\frac{m_1P_i}{m_3P_i} \\
+\frac{m_2P_i}{m_3P_i}
+\end{bmatrix}\quad M=K[R,T]=
+\begin{bmatrix}
+m_1 \\
+m_2 \\
+m_3
+\end{bmatrix}
+$$
+其中，$u_i,v_i$为**图像**上的**欧式坐标**，$P_i$为**世界坐标系**下的**齐次坐标。**故**一个点**可以对应**两个方程**，由于投影矩阵$M$共有**11个自由度**，故我们至少需要**6对点**，实际操作中使用多于六对点来获得更加鲁棒的结果。将方程写成以下形式：
+$$
+u_{i}=\frac{m_{1}P_{i}}{m_{3}P_{i}}\to u_{i}(m_{3}P_{i})=m_{1}P_{i}\to u_{i}(m_{3}P_{i})-m_{1}P_{i}=0\\
+v_i=\frac{m_2P_i}{m_3P_i}\to v_i(m_3P_i)=m_2P_i\to v_i(m_3P_i)-m_2P_i=0
+$$
+将方程组合在一起：
+$$
+\begin{cases}
+-u_1(m_3P_1)+m_1P_1=0 \\
+-v_1(m_3P_1)+m_2P_1=0 \\
+\vdots \\
+-u_n(m_3P_n)+m_1P_n=0 \\
+-v_n(m_3P_n)+m_2P_n=0 & 
+\end{cases}\quad\longrightarrow\quad\boxed{P\overline{m}=0}
+$$
+<img src="./assets/image-20250701100021290.png" alt="image-20250701100021290" style="zoom: 67%;" />
+
+其中$P\bar{m}=0$为齐次线性方程组，$M=$**方程数**为$2n$（$n$为选取的点数）且$n\geq6$，有11个$N=$**未知参数**。
+
+当$M>N$时，对于超定方程组：
+
+- **0 总是一个解，且不存在非零解**；
+- 目标：求**非零解**。故我们只能求$P\bar{m}$的最小值。
+- 超定齐次线性方程组的**最小二乘解**为：
+
+$$
+\begin{aligned}
+ & x^{*}=arg\min_{x}\|P\bar{m}\| \\
+ & s.t.\|\bar{m}\|=1
+\end{aligned}
+$$
+
+解上述方程的方法为**奇异值分解**：
+
+<img src="./assets/image-20250701103306745.png" alt="image-20250701103306745" style="zoom:80%;" />
+
+结论：$m$为$P$矩阵最小奇异值的右奇异向量（即最小奇异值对应的$V$向量），且$\|\bar{m}\|=1$。
+$$
+\boldsymbol{m}\overset{\mathrm{def}}{\operatorname*{\operatorname*{=}}}
+\begin{pmatrix}
+{m_1}^T \\
+{m_2}^T \\
+{m_3}^T
+\end{pmatrix}\Longrightarrow M=
+\begin{bmatrix}
+m_1 \\
+m_2 \\
+m_3
+\end{bmatrix}=
+\begin{bmatrix}
+A & b
+\end{bmatrix}\\
+A=
+\begin{bmatrix}
+{a_1}^T \\
+{a_2}^T \\
+{a_3}^T
+\end{bmatrix}\quad\mathbf{b}=
+\begin{bmatrix}
+{b_1} \\
+{b_2} \\
+{b_3}
+\end{bmatrix}
+$$
+
+### 2. 提取摄相机参数
+
+经过一通推导后(略)：
+
+<img src="./assets/image-20250701145417255.png" alt="image-20250701145417255" style="zoom:50%;" />
+
+## 十三、三维重建与极几何
+
+单幅视图2D到3D的映射具有多义性，**无法正确感应深度**，因此需要采用**多目/双目检测**。
+
+### 1. 三角化（三维重建基础）
+
+已知两个摄像机参数及其对应的直线方程$l,l^\prime$，$O_1,O_2$为**摄像机坐标原点**，求这两条直线的交点$P$即为：
+$$
+P=l\times l^{\prime}
+$$
+<img src="./assets/image-20250701112146969.png" alt="image-20250701112146969" style="zoom: 86%;" />
+
+但由于噪声的存在，**两条直线通常不相交。**
+
+- 问题：已知$p$和$p$'，$K$和$K$'以及$R,T$
+- 求解：$P$点的三维坐标？
+
+***非线性解法***
+
+寻找一个最优的$P^{*}$，让这个点分别投影到两个摄像机平面上，即$MP^{*}$，使投影的点与$p$和$p$'点的距离之和**越小越好**：
+$$
+d(p,MP^*)+d(p^*,M^*P^*)
+$$
+求解：**牛顿法与列文伯格-马夸尔特法(L-M方法)**。
+
+一般我们将$O_1$作为**世界坐标系**，则$M=K[I,0],M^{\prime}=K^{\prime}[R,T]$。故求出的$P^{*}$是**相对于$O_1$的坐标**。
+
+### 2. 多视图几何的关键问题
+
+- **摄像机几何**：从一张或者多张图像中求解摄像机的内、外参数。
+- **场景几何**：通过二至多幅图寻找3D场景坐标。
+- **对应关系**：已知一个图像中的$p$点，如何在另外一个图像中找到$p^\prime$点。
+
+### 3. 极几何
+
+极几何描述了**同一场景或者物体的两个视点图像间的几何关系。**
+
+​                     <img src="./assets/image-20250701133724205.png" alt="image-20250701133724205" style="zoom:67%;" />           <img src="./assets/image-20250701134450925.png" alt="image-20250701134450925" style="zoom:67%;" />
+
+<img src="./assets/image-20250701135213226.png" alt="image-20250701135213226" style="zoom: 67%;" />
+
+若两个图像平面平行：
+
+- 基线平行于图像平面，极点$e$和$e'$位于无穷远处；
+- 极线平行于图像坐标系的$u$轴。
+
+<img src="./assets/image-20250701141741293.png" alt="image-20250701141741293" style="zoom:50%;" />
+
+### 4. 极几何约束
+
+**通过极几何约束，将搜索范围缩小到对应的极线上。**
+
+#### 4.1 本质矩阵
+
+本质矩阵对**规范化摄像机**（规范化坐标系）拍摄的**两个视点图像间**的极几何关系进行代数描述。
+
+**规范化投影**的公式如下：
+$$
+P^{\prime}=
+\begin{bmatrix}
+x \\
+y \\
+z
+\end{bmatrix}=
+\begin{bmatrix}
+1 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & 0
+\end{bmatrix}
+\begin{bmatrix}
+x \\
+y \\
+z \\
+1
+\end{bmatrix}=MP
+$$
+<img src="./assets/image-20250701142216795.png" alt="image-20250701142216795" style="zoom:67%;" />
+
+​    由$p=Rp_w+T$可得，**任何一个点对应世界坐标系($O_1$)**满足以下公式：
+$$
+p_w=R^T(p-T)
+$$
+故有以下结论：
+
+<img src="./assets/image-20250701143525757.png" alt="image-20250701143525757" style="zoom:80%;" />
+
+根据叉乘的矩阵表示，上式可以进一步化为：
+$$
+p^{\prime T}[T\times R]p=p^{\prime T}[T_{\times}]Rp=0 \Rightarrow p^{\prime T}Ep=0
+$$
+其中$E=T\times R=[T_{\times}]R$，即$3×3$的**本质矩阵**，**它刻画了$p,p^\prime$点之间的对应关系。**故只有满足上述方程的点才可能是目标的$p,p^\prime$点。
+
+有以下结论（推导略）：
+
+<img src="./assets/image-20250701150830582.png" alt="image-20250701150830582" style="zoom: 65%;" />
+
+==本质矩阵描述校正相机视图间的几何关系，用于**规范化摄像机拍摄**的情况。==
+
+#### 4.2 基础矩阵
+
+**基础矩阵**对**一般**的透视摄像机拍摄的**两个视点的图像间**的极几何关系进行代数描述。
+
+思路：变换到规范化摄像机：
+
+<img src="./assets/image-20250701155317759.png" alt="image-20250701155317759" style="zoom:67%;" />
+$$
+p=K[I,0]P\quad K^{-1}p=K^{-1}K[I,0]P=
+\begin{bmatrix}
+1 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & 0
+\end{bmatrix}P\\
+p_c=K^{-1}p\quad p_c=
+\begin{bmatrix}
+1 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & 0
+\end{bmatrix}P
+$$
+经过上述转化，$p_c,P$之间也转为**规范化**的关系。代入到**本质矩阵**的方程$p^{\prime T}Ep=0$中有：
+$$
+p_{c}^{\prime T}Ep_{c}=p_{c}^{\prime T}[T_{\times}]Rp_{c}=\left(K^{\prime-1}p^{\prime}\right)^{T}\cdot[T_{\times}]RK^{-1}p=p^{\prime T}K^{\prime-T}[T_{\times}]RK^{-1}p=0
+$$
+令$F=K^{\prime}{}^{-T}[T_\times]RK^{-1}$，称$F$为$3×3$的**基础矩阵**，故有：
+$$
+p^{\prime T}Fp=0
+$$
+基础矩阵的结论有：
+
+<img src="./assets/image-20250701162050321.png" alt="image-20250701162050321" style="zoom:90%;" />
