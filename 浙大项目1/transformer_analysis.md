@@ -62,7 +62,7 @@ $$
 S_h=\frac{Q_hK_h^\top}{\sqrt{h}}\in\mathbb{R}^{n\times n},\quad A_h=\mathrm{softmax}(S_h).
 $$
 ​	$Q_hK_h^\top$ 结果的**每个元素**都可以看作一对**键—查询对**之间的点积，根据点积的概念，可以容易看出**值越大**说明键与查询越**对齐**。同时，为了维持数值稳定性，所有点积的结果都会除以**键—查询空间维度的平方根**。
-​	由于 softmax 逐行作用，$A_h$ 的每一行都是一组**概率分布** (行随机矩阵)，每个元素都是一个注意力权重，表示一对键与查询向量之间的相关度。
+​	由于 softmax 逐行作用，$A_h$ 的每一行都是一组**概率分布** (行随机矩阵)，每个元素都是一个注意力权重，表示一对**键与查询向量之间的相关度**。
 
 ​	GPT的本质还是一个**自回归的语言模型**，在预测阶段，其输出序列的词元是逐个生成的，因此同样需要**掩码**操作（这也是为什么它采用的是解码器，而**BERT**作为**双向**编码器无需掩码操作），即需要保证第 $i$ 个 token 不能看到序列中位置 $j>i$ 的信息，令：
 $$
@@ -83,6 +83,8 @@ $$
 ​	为此，我们可以用独立学习得到的 $H$ 组不同的**线性投影(MLP**)来变换查询、键和值。然后，这 $h$ 组变换后的査询、键和值将并行地送到**注意力汇聚**中。最后，将这 $H$ 个注意力汇聚的输出**拼接在一起**，并且通过另一个可以学习的线性投影进行变换，以产生最终输出。这种设计即为**多头注意力机制**，对于 $h$ 个注意力汇聚输出，每一个注意力汇聚都被称作一个**头**(head)。
 
 <img src="./assets/未命名绘图.drawio-1751789084903-6.png" alt="未命名绘图.drawio" style="zoom:50%;" />
+
+<center style="color:#C0C0C0">图3 多头注意力机制示意图</center>
 
 ​	对于每个注意力头 $\mathbf{h}_i(i=1,\dots,H)$：
 $$
@@ -123,6 +125,8 @@ $$
 ​	如何理解呢？我们可以设想一个这样的场景：
 
 <img src="./assets/output.png" alt="output" style="zoom:36%;" />
+
+<center style="color:#C0C0C0">图4 谱范数示意图</center>
 
 - 将$A$看作为一个**线性变换**，它将向量 $x$ 拉伸或压缩为 $Ax$；
 - 把**单位球**$\|x\|_2=1$看成输入空间的“所有方向”，对其进行线性变换后会得到一个**椭球**（或更高维的超椭球）：$E=\{Ax:\|x\|_2=1\}$；
@@ -265,48 +269,107 @@ $$
 
 ### 2.3  实验检验
 
-​	我们使用 PyTorch 和 huggingface Transformers 做了一个微型实验：加载 GPT-2 大模型，把一句“Hello nice to meet you.” 编码后前向推理，并拿到每层自注意力权重矩阵。随后，对每个头的注意力矩阵求最大奇异值（即谱范数，衡量线性映射的放大倍数），再在该层所有头之间取平均，得到每层“平均谱范数”列表。最后用 matplotlib 把这些值随层号的变化画成折线图，直观展示 GPT-2 各层注意力的线性放大趋势。具体代码如下：
+​	我们使用 PyTorch 和 huggingface Transformers 做了一个微型实验：加载 GPT-2 以及 GPT-1 大模型（**作为Pre-norm 与 Post-norm的对照**），把一句包含若干 token 的英文句子编码后前向推理，并拿到每层自注意力权重矩阵。随后，对每个头的注意力矩阵求最大奇异值（即谱范数，衡量线性映射的放大倍数），再在该层所有头之间取平均，得到每层“平均谱范数”列表。最后用 matplotlib 把这些值随层号的变化画成折线图，直观展示 GPT-2 及 GPT-1 各层注意力的线性放大趋势。具体代码如下：
 
 ```python
 # Denis
 # -*- coding: utf-8 -*-
 import torch
-from transformers import AutoTokenizer, AutoModel
 import matplotlib.pyplot as plt
+from typing import List
+from transformers import AutoTokenizer, AutoModel
+import pandas as pd
 
-model_name = "gpt2"                
-tokenizer  = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-model      = AutoModel.from_pretrained(
-                model_name, output_attentions=True, local_files_only=True).eval()
+def load_token_sequences(csv_path: str) -> List[str]:
+    df = pd.read_csv(csv_path, usecols=["token_sequence"])
+    return list(df["token_sequence"].astype(str))
 
-text   = ("Hello nice to meet you.",)
-inputs = tokenizer(text, return_tensors="pt")
+MODELS = {
+    "gpt2"       : "gpt2",
+    "openai-gpt" : "openai-gpt",
+}
+TEXTS  = load_token_sequences("Short_English_Sentences.csv")
+print(TEXTS)
+DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
 
-with torch.no_grad():
-    outs = model(**inputs)          # outs.attentions: tuple[num_layers]
-attns = outs.attentions
+def layer_sigma_means(model_name: str, texts: List[str]):
+    tok = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+    if tok.pad_token is None:
+        tok.add_special_tokens({'pad_token': '[PAD]'})
+    ids = tok(
+        texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True
+    ).to(DEVICE)
 
-layer_norms = []
-for lay_attn in attns:              # shape: (B, H, S, S)
-    head_max = []
-    for head in lay_attn[0]:        # 取 batch=0
-        # 最大奇异值
-        sigma_max = torch.linalg.svdvals(head).max().item()
-        head_max.append(sigma_max)
-    layer_norms.append(sum(head_max) / len(head_max))   # 该层取平均
+    model = AutoModel.from_pretrained(
+        model_name, output_attentions=True, local_files_only=True
+    )
+    if tok.pad_token_id >= model.config.vocab_size:
+        model.resize_token_embeddings(len(tok))
+    model.config.pad_token_id = tok.pad_token_id
+    model = model.to(DEVICE).eval()
 
-plt.figure(figsize=(6,4))
-plt.plot(range(1, len(layer_norms)+1), layer_norms, marker="o")
+    curve = []
+    with torch.no_grad():
+        attns = model(**ids).attentions  # tuple[num_layers]
+        for lay_attn in attns:           # lay_attn.shape = (B, H, S, S)
+            sigmas = [
+                torch.linalg.svdvals(head.float()).max()
+                for sample in lay_attn   # 遍历 batch
+                for head in sample       # 遍历每个 head
+            ]
+            curve.append(torch.stack(sigmas).mean().item())
+
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return curve
+
+curves = {name: layer_sigma_means(path, TEXTS) for name, path in MODELS.items()}
+
+plt.figure(figsize=(6, 4))
+for name, y in curves.items():
+    plt.plot(range(1, len(y) + 1), y, marker="o", label=name)
 plt.xlabel("Layer")
-plt.ylabel("Spectral norm (avg across heads)")
-plt.title(f"{model_name} attention spectral norms")
+plt.ylabel("Spectral norm (avg across samples & heads)")
+plt.title("GPT-1 (Post-LN) vs GPT-2 (Pre-LN) attention spectral norms")
 plt.grid(True)
+plt.legend()
 plt.tight_layout()
-plt.show()
+plt.savefig("spectrum.png", dpi=300)
+print("Plot saved as 'spectrum.png'.")
 
 ```
 
+​	我先使用了128个**较短的 token 序列**（每句话由1~5个 token 组成）作为输入，得到的结果如下图所示：
 
+<img src="./assets/image-20250708171933507.png" alt="image-20250708171933507" style="zoom:30%;" />
+
+<center style="color:#C0C0C0">图5 较短token下GPT-1与GPT-2的谱范数对照图</center>
+
+其中横坐标为模型的层数，纵坐标为**该层所有头的注意力矩阵谱范数的平均值**。从图中可以看到，Post-Norm 结构的 openai-gpt (GPT-1) （橙线）在第二层就迅速升到大约 2.05，随后虽有轻微回落，但在第 8 层以后再次抬头并最终停在 2.25 左右；而 Pre-Norm 的 GPT-2 （蓝线）从 1.5 左右缓慢爬升，始终保持比 Post-LN 低 0.1–0.25 的间隔，并在末层回落到约 1.9。
+
+​	接下来，我用128个**较长的 token 序列**（由12~18个 token 组成）作为输入，得到的结果如下图所示：
+
+<img src="./assets/image-20250708174523513.png" alt="image-20250708174523513" style="zoom:30%;" />
+
+<center style="color:#C0C0C0">图5 较长token下GPT-1与GPT-2的谱范数对照图</center>
+
+整体趋势是差不多的，只是由于 token 数量 $n$ 的显著增大，注意力权重矩阵的谱范数整体不可避免地同步增大，但依然可以明显看出 Pre-Norm 的优势。
+
+​	为了进一步探讨 Pre-Norm 在深层网络中优化的机制，我同时也在**36层的 GPT2-large **上进行了相同的实验，结果如下：
+
+<img src="./assets/image-20250708181601317.png" alt="image-20250708181601317" style="zoom:30%;" />
+
+​	在 36 层 GPT-2-large 上复现相同实验后可以看到，谱范数曲线在前 10 层依旧快速抬升，到中段（第 12 层左右）便趋于平台，随后在 20 至 32 层之间稳定徘徊在 2.0~2.1 的区间，最后两三层出现明显回落，最低点接近 1.5。与 12 层的 GPT-2 相比，这条曲线几乎就是将浅层模型的走势在纵轴上做了一次“等比放大”并沿层数方向拉长：起始段斜率相似，平台值略高，但下降端点仍落回到同一数量级。
+
+​	Pre-Norm 在深层堆叠时能够把每层注意力的最大放大倍数牢牢限制在一个窄幅常数区间内，使得谱范数不会随深度累积而失控；而 Post-Norm 缺乏这种钳制，当层数增加到十几层时就已显著高于 Pre-Norm。这正解释了现代大型 Transformer 一般都采用 Pre-Norm：它能在保证表达能力的同时，把每层注意力的 Lipschitz 系数保持在一个常数范围内，从而避免梯度随深度指数式爆炸，令**更深的堆叠**成为可能。
+
+## 3  Transformer收敛性分析
+
+​	正如我在第一部分所述，**跳跃连接（skip connections）**和**多层感知机（MLP）**在Transformer中扮演者关键的角色。对于缺少了这两个结构的纯注意力网络（Self-Attention Network, SAN），**随着网络深度增加，其输出会以双指数**速率退化到**秩1**的 “token 统一” 矩阵，造成**信息坍塌（information collapse）**。而引入跳跃连接和MLP则能有效防止输出退化。
 
 
 
