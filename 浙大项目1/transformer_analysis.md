@@ -263,7 +263,50 @@ $$
 | **梯度不易爆炸/消失**  | 反向链中的 $A^\top$ 同样几乎 non-expansive；跨层乘积不会指数放大或衰减。 |
 | **训练深度可大幅增加** | 这正是 GPT-2 以后 Transformer 模型普遍采用 Pre-Norm 的经验原因之一。 |
 
-​	
+### 2.3  实验检验
+
+​	我们使用 PyTorch 和 huggingface Transformers 做了一个微型实验：加载 GPT-2 大模型，把一句“Hello nice to meet you.” 编码后前向推理，并拿到每层自注意力权重矩阵。随后，对每个头的注意力矩阵求最大奇异值（即谱范数，衡量线性映射的放大倍数），再在该层所有头之间取平均，得到每层“平均谱范数”列表。最后用 matplotlib 把这些值随层号的变化画成折线图，直观展示 GPT-2 各层注意力的线性放大趋势。具体代码如下：
+
+```python
+# Denis
+# -*- coding: utf-8 -*-
+import torch
+from transformers import AutoTokenizer, AutoModel
+import matplotlib.pyplot as plt
+
+model_name = "gpt2"                
+tokenizer  = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+model      = AutoModel.from_pretrained(
+                model_name, output_attentions=True, local_files_only=True).eval()
+
+text   = ("Hello nice to meet you.",)
+inputs = tokenizer(text, return_tensors="pt")
+
+with torch.no_grad():
+    outs = model(**inputs)          # outs.attentions: tuple[num_layers]
+attns = outs.attentions
+
+layer_norms = []
+for lay_attn in attns:              # shape: (B, H, S, S)
+    head_max = []
+    for head in lay_attn[0]:        # 取 batch=0
+        # 最大奇异值
+        sigma_max = torch.linalg.svdvals(head).max().item()
+        head_max.append(sigma_max)
+    layer_norms.append(sum(head_max) / len(head_max))   # 该层取平均
+
+plt.figure(figsize=(6,4))
+plt.plot(range(1, len(layer_norms)+1), layer_norms, marker="o")
+plt.xlabel("Layer")
+plt.ylabel("Spectral norm (avg across heads)")
+plt.title(f"{model_name} attention spectral norms")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+```
+
+
 
 
 
