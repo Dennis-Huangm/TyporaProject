@@ -30,9 +30,9 @@ $$
 $$
 \hat{X}=(X-\mu\mathbf{1}_d^\top)\oslash(\sigma\mathbf{1}_d^\top+\varepsilon),
 $$
-​	其中，$\mu\in \mathbb{R}^{n \times 1}$，$\sigma \in \mathbb{R}^{n \times 1}$均为堆叠而成的**向量**；；$\oslash$为**Hadamard除**（矩阵逐元素相除）；$\mathbf1_d \in \mathbb{R}^{d \times 1}$为全1列向量；$\varepsilon \in \mathbb{R}^{n \times d}$，用于维持数值稳定。最后加上仿射变换的结果为：
+​	其中$\mu\in \mathbb{R}^{n \times 1}$，$\sigma \in \mathbb{R}^{n \times 1}$均为堆叠而成的**向量**；$\oslash$为**Hadamard除**（矩阵逐元素相除）；$\mathbf1_d \in \mathbb{R}^{d \times 1}$为全1列向量；$\varepsilon \in \mathbb{R}^{n \times d}$，用于维持数值稳定。最后加上仿射变换的结果为（$\gamma^\top,\beta^\top$ 向列方向广播）：
 $$
-\mathrm{LN}(X)=\hat{X}\odot\gamma^\top+\beta^\top,\quad\gamma,\beta\in\mathbb{R}^d.
+\mathrm{LN}(X)=\hat{X}\odot\gamma^\top+\beta^\top,\quad\gamma,\beta\in\mathbb{R}^{d\times 1}.
 $$
 ​	以下为Layer Normalization的优点：**只依赖行内统计**（不需存储/维护全局运行均值与方差；只对最后一维做并行归约），与 batch size 无关，因此测试与训练过程完全一致。同时，LN 能减小层输入**尺度漂移**（internal covariate shift），在注意力与残差结构叠加时，能保持梯度在深f网络中有效传播，加速收敛。
 ​	Transformer 在**小批量甚至序列长度为 1 的自回归推断**场景中尤为常见，LN**仅涉及当前 token 向量本身**，推断时与训练时的分布完全对齐，无需像 BatchNorm 那样维护滑动均值，也不会出现 batch 幅度微抖动导致的生成质量劣化问题。
@@ -355,7 +355,7 @@ print("Plot saved as 'spectrum.png'.")
 
 <img src="./assets/image-20250708174523513.png" alt="image-20250708174523513" style="zoom:30%;" />
 
-<center style="color:#C0C0C0">图5 较长token下GPT-1与GPT-2的谱范数对照图</center>
+<center style="color:#C0C0C0">图6 较长token下GPT-1与GPT-2的谱范数对照图</center>
 
 整体趋势是差不多的，只是由于 token 数量 $n$ 的显著增大，注意力权重矩阵的谱范数整体不可避免地同步增大，但依然可以明显看出 Pre-Norm 的优势。
 
@@ -363,37 +363,94 @@ print("Plot saved as 'spectrum.png'.")
 
 <img src="./assets/image-20250708181601317.png" alt="image-20250708181601317" style="zoom:30%;" />
 
+<center style="color:#C0C0C0">图7 不同深度的GPT-2的谱范数对照图</center>
+
 ​	在 36 层 GPT-2-large 上复现相同实验后可以看到，谱范数曲线在前 10 层依旧快速抬升，到中段（第 12 层左右）便趋于平台，随后在 20 至 32 层之间稳定徘徊在 2.0~2.1 的区间，最后两三层出现明显回落，最低点接近 1.5。与 12 层的 GPT-2 相比，这条曲线几乎就是将浅层模型的走势在纵轴上做了一次“等比放大”并沿层数方向拉长：起始段斜率相似，平台值略高，但下降端点仍落回到同一数量级。
 
 ​	Pre-Norm 在深层堆叠时能够把每层注意力的最大放大倍数牢牢限制在一个窄幅常数区间内，使得谱范数不会随深度累积而失控；而 Post-Norm 缺乏这种钳制，当层数增加到十几层时就已显著高于 Pre-Norm。这正解释了现代大型 Transformer 一般都采用 Pre-Norm：它能在保证表达能力的同时，把每层注意力的 Lipschitz 系数保持在一个常数范围内，从而避免梯度随深度指数式爆炸，令**更深的堆叠**成为可能。
 
 ## 3  Transformer收敛性分析
 
-​	正如我在第一部分所述，**跳跃连接（skip connections）**和**多层感知机（MLP）**在Transformer中扮演者关键的角色。对于缺少了这两个结构的纯注意力网络（Self-Attention Network, SAN），**随着网络深度增加，其输出会以双指数**速率退化到**秩1**的 “token 统一” 矩阵，造成**信息坍塌（information collapse）**。而引入跳跃连接和MLP则能有效防止输出退化。
+​	正如我在第一部分所述，**跳跃连接（skip connections）**和**多层感知机（MLP）**在Transformer中扮演者关键的角色。对于缺少了这两个结构的纯注意力网络（Self-Attention Network, SAN），**随着网络深度增加，其输出会以双指数**速率**收敛**到**秩1**的 “token 统一” 矩阵，造成**信息坍塌（information collapse）**，而引入跳跃连接和MLP则能有效防止输出退化。
+
+​	论文*《Attention is not all you need: pure attention loses rank doubly exponentially with depth》*通过理论分析与详细的实验，验证了在标准Transformer架构中存在的这种**收敛**现象。
+
+### 1  路径分解定理
+
+​	文章将多头自注意力网络的输出表达为**多个单头网络之和**。这些单头网络被称为**"路径"**，每条路径由一系列注意力头表示。
+
+<img src="./assets/image-20250709100650887.png" alt="image-20250709100650887" style="zoom: 80%;" />
+
+<center style="color:#C0C0C0">图7 深度自注意力网络（SAN）中两条路径，具有H个头和L层。在每一层，路径可以选择经过其中一个头或绕过该层。在每个注意力层后添加一个多层感知器（MLP）模块即构成Transformer架构。</center>
+
+​	令$X \in \mathbb{R}^{n\times\ d_{in}}$ 为包含 $n$ 个token 的输入矩阵。SAN 由 $L$ 个多头自注意力层构成，每层包含$H$个注意力头。第 $h$ 个自注意力头的输出可表示为：
+$$
+\mathrm{SA}_h(X)=P_hXW_{V,h}+1b_{V,h}^\top.
+$$
+其中，$W_{V,h}\in \mathbb{R}^{d_{in}\times d_v}$ 为值（value）矩阵，$P_h\in\mathbb{R}^{n\times n}$ 为行随机矩阵（即前文的注意力矩阵）：
+$$
+\begin{aligned}
+P_{h}&=\mathrm{softmax}\left(d_{qk}^{-\frac{1}{2}}(\boldsymbol{XW}_{Q,h}+\boldsymbol{1b}_{Q,h}^{\top})(\boldsymbol{XW}_{K,h}+\boldsymbol{1b}_{K,h}^{\top})^{\top}\right) \\
+&=\mathrm{softmax}(d_{qk}^{-\frac{1}{2}}(\boldsymbol{XW}_{QK,h}\boldsymbol{X}^{\top}+\boldsymbol{1b}_{Q,h}^{\top}\boldsymbol{W}_{K,h}^{\top}\boldsymbol{X}^{\top})),
+\end{aligned}
+$$
+其中 $W_{K,h},W_{Q,h}\in\mathbb{R}^{d_{in}\times d_{qk}}$ 分别为 key 与 query 的投影矩阵，$W_{QK,h}=W_{Q,h}W_{K,h}^{\top}$，最后使用softmax函数对其输入的每一行进行独立运算得到最终结果。
+
+​	每个SAN层的输出通过将所有 $H$ 个注意力头的独立输出（沿最后一个维度）进行拼接，并通过线性投影将其映射到适当大小的子空间而形成：
+$$
+\begin{aligned}
+\mathrm{SA}(\boldsymbol{X}) & =\mathbf{1}[\boldsymbol{b}_{O,1}^{\top},\cdots,\boldsymbol{b}_{O,H}^{\top}]+[\mathrm{SA}_{1}(\boldsymbol{X}),\cdots,\mathrm{SA}_{H}(\boldsymbol{X})][\boldsymbol{W}_{O,1}^{\top},\cdots,\boldsymbol{W}_{O,H}^{\top}]^{\top} \\
+ & =\sum_{h\in[H]}P_{h}XW_{h}+\mathbf{1}b_{O}^{\top},
+\end{aligned}
+$$
+其中 $W_{h}=W_{V,h}W_{O,h}^{\top},\quad b_{O}=\sum_{h}b_{O,h}。$
+
+​	假设 $X^l$ 为第 $l$ 层的输出，并规定 $X^0=X$。按照常规做法，我们让所有层都由相同数量的注意力头组成。忽略偏置项 $\mathbf{1}b_{O,h}^\top$ ，SAN 的输出为：
+$$
+\begin{aligned}
+X^{L} & =\sum_{h\in[H]}P_{h}^{L}X^{L-1}W_{h}^{L} \\
+ & =\sum_{h\in[H]}P_{h}^{L}\left(\sum_{h^{\prime}\in[H]}P_{h^{\prime}}^{L-1}X^{L-2}W_{h^{\prime}}^{L-1}\right)W_{h}^{L}=\sum_{h_{L},h_{L-1}\in[H]^{2}}P_{h_{L}}^{L}P_{h_{L-1}}^{L-1}X^{L-2}W_{h_{L-1}}^{L-1}W_{h_{L}}^{L}
+\end{aligned},
+$$
+经过递推展开的结果为：
+$$
+X^{L}=\sum_{h_{1},\ldots,h_{L}\in[H]^{L}}(P_{h_{L}}^{L}\cdots P_{h_{1}}^{1})\boldsymbol{X}(\boldsymbol{W}_{h_{1}}^{1}\cdots\boldsymbol{W}_{h_{L}}^{L}).
+$$
 
 
+若将自注意力网络视作有向无环图，根据上述公式，我们可以把**每一层的每一个注意力头**看作一个节点，且只允许 **从层 $l$** 的**任一头**连到 **层 $l+1$** 的**任一头**——这天然形成了一个 **$L$ 层、无回路 (DAG) 的有向图**。
 
+故对于深度为 $L$、每层含 $H$ 个注意力头的自注意力网络输出（包含偏置和跳跃连接）由以下公式给出：
+$$
+SAN(X)=\sum_{path\in[H]^L}P_{path}XW_{path}+\mathbf{1}b^\top
+$$
+其中 $P_{path}=P_{h_{L}}^{L}\cdots P_{h_{1}}^{1}$ 是一个依赖输入的随机矩阵，$W_{path}=W_{h_{1}}^{1}\cdots W_{h_{L}}^{L}$与 $b$ 则与输出 $X$ 无关。同时，公式的每一项都描述了跨越不同层的注意力头的长度为 $L$ 的路径：
+$$
+path=(h_1,\ldots,h_L),\quad h_l\in(0,1,\ldots,H)
+$$
+这条路径依次指定第 1 层用哪一头、第 2 层用哪一头，直到第 $L$ 层，且没有 skip-connection 时，每层必须选头，因而共有 $H^L$ 条路径。因此，**路径分解将 SAN 的作用描述为多个简单单头网络的组合**。为理解路径间的相互依存关系，可将执行的操作分为两类：
 
+- 左侧乘法，在 token 维度做加权平均，**跨 token 交互**；
+- 右侧乘法，对每个 token 的通道向量做线性变换，**token-wise 独立**。
 
+### 2  单头 SAN 的收敛性
 
+​	在考虑整个 SAN 的收敛性前，文章先独立分析了每一条路径的行为，首先是前向传播过程中残差的变化：
+$$
+\mathrm{res}(X)=X-1x^\top,\quad x=\mathrm{argmin}_x\|X-1x^\top\|
+$$
+根据以下定理，残差范数会以惊人的速度（以立方速率双指数级）收敛至零（证明略）：
 
+对任意由 $L$ 层纯单头自注意力（SAN）堆叠而成的网络，假设每层权重满足：
+$$
+\|W_Q^\ell\|_1\|W_K^\ell\|_1\|W_V^\ell\|_{1,\infty}\leq\beta,
+$$
+其中 **$\|A\|_{1,\infty}=\sqrt{\|A\|_1\|A\|_\infty}$** 便于同时约束、控制行和列尺度：
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+| 矩阵范数   | 公式                                                         | 直观含义                                       |
+| ---------- | ------------------------------------------------------------ | ---------------------------------------------- |
+| **1-范数** | $\displaystyle\boxed{\;\lVert A\rVert_{1} \;=\; \max_{1\le j\le n}\;\sum_{i=1}^{m}\lvert a_{ij}\rvert\;}$ | 把 **每一列** 的绝对值相加，再取其中*最大列和* |
+| **∞-范数** | $\displaystyle\boxed{\;\lVert A\rVert_{\infty} \;=\; \max_{1\le i\le m}\;\sum_{j=1}^{n}\lvert a_{ij}\rvert\;}$ | 把 **每一行** 的绝对值相加，再取其中*最大行和* |
 
 
 
