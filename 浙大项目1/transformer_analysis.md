@@ -371,7 +371,7 @@ print("Plot saved as 'spectrum.png'.")
 
 ## 3  Transformer收敛性分析
 
-​	正如我在第一部分所述，**跳跃连接（skip connections）**和**多层感知机（MLP）**在Transformer中扮演者关键的角色。对于缺少了这两个结构的纯注意力网络（Self-Attention Network, SAN），**随着网络深度增加，其输出会以双指数**速率**收敛**到**秩1**的 “token 统一” 矩阵，造成**信息坍塌（information collapse）**，而引入跳跃连接和MLP则能有效防止输出退化。
+​	正如我在第一部分所述，**跳跃连接（skip connections）**和**多层感知机（MLP）**在Transformer中扮演者关键的角色。对于缺少了这两个结构的纯注意力网络（Self-Attention Network, SAN），**随着网络深度增加，其输出会以双指数**速率**收敛**到**秩1**的 “token 统一” 矩阵，造成**信息坍塌（information collapse）**，而引入跳跃连接和 MLP 则能有效防止输出退化。
 
 ​	论文*《Attention is not all you need: pure attention loses rank doubly exponentially with depth》*通过理论分析与详细的实验，验证了在标准Transformer架构中存在的这种**收敛**现象。
 
@@ -409,12 +409,12 @@ $$
 $$
 \begin{aligned}
 X^{L} & =\sum_{h\in[H]}P_{h}^{L}X^{L-1}W_{h}^{L} \\
- & =\sum_{h\in[H]}P_{h}^{L}\left(\sum_{h^{\prime}\in[H]}P_{h^{\prime}}^{L-1}X^{L-2}W_{h^{\prime}}^{L-1}\right)W_{h}^{L}=\sum_{h_{L},h_{L-1}\in[H]^{2}}P_{h_{L}}^{L}P_{h_{L-1}}^{L-1}X^{L-2}W_{h_{L-1}}^{L-1}W_{h_{L}}^{L}
-\end{aligned},
+ & =\sum_{h\in[H]}P_{h}^{L}\left(\sum_{h^{\prime}\in[H]}P_{h^{\prime}}^{L-1}X^{L-2}W_{h^{\prime}}^{L-1}\right)W_{h}^{L}=\sum_{h_{L},h_{L-1}\in[H]}P_{h_{L}}^{L}P_{h_{L-1}}^{L-1}X^{L-2}W_{h_{L-1}}^{L-1}W_{h_{L}}^{L},
+\end{aligned}
 $$
 经过递推展开的结果为：
 $$
-X^{L}=\sum_{h_{1},\ldots,h_{L}\in[H]^{L}}(P_{h_{L}}^{L}\cdots P_{h_{1}}^{1})\boldsymbol{X}(\boldsymbol{W}_{h_{1}}^{1}\cdots\boldsymbol{W}_{h_{L}}^{L}).
+X^{L}=\sum_{h_{1},\ldots,h_{L}\in[H]}(P_{h_{L}}^{L}\cdots P_{h_{1}}^{1})\boldsymbol{X}({W}_{h_{1}}^{1}\cdots{W}_{h_{L}}^{L}).
 $$
 
 
@@ -422,13 +422,13 @@ $$
 
 故对于深度为 $L$、每层含 $H$ 个注意力头的自注意力网络输出（包含偏置和跳跃连接）由以下公式给出：
 $$
-SAN(X)=\sum_{path\in[H]^L}P_{path}XW_{path}+\mathbf{1}b^\top
+SAN(X)=\sum_{path\in[H]}P_{path}\boldsymbol{X}W_{path}+\mathbf{1}b^\top,
 $$
 其中 $P_{path}=P_{h_{L}}^{L}\cdots P_{h_{1}}^{1}$ 是一个依赖输入的随机矩阵，$W_{path}=W_{h_{1}}^{1}\cdots W_{h_{L}}^{L}$与 $b$ 则与输出 $X$ 无关。同时，公式的每一项都描述了跨越不同层的注意力头的长度为 $L$ 的路径：
 $$
-path=(h_1,\ldots,h_L),\quad h_l\in(0,1,\ldots,H)
+path=(h_1,\ldots,h_L),\quad h_l\in(0,1,\ldots,H).
 $$
-这条路径依次指定第 1 层用哪一头、第 2 层用哪一头，直到第 $L$ 层，且没有 skip-connection 时，每层必须选头，因而共有 $H^L$ 条路径。因此，**路径分解将 SAN 的作用描述为多个简单单头网络的组合**。为理解路径间的相互依存关系，可将执行的操作分为两类：
+这条路径依次指定第 1 层用哪一头、第 2 层用哪一头，直到第 $L$ 层，且**没有 skip-connection** 时，每层必须选头，因而共有 $H^L$ 条路径。因此，**路径分解将 SAN 的作用描述为多个简单单头网络的组合**。为理解路径间的相互依存关系，可将执行的操作分为两类：
 
 - 左侧乘法，在 token 维度做加权平均，**跨 token 交互**；
 - 右侧乘法，对每个 token 的通道向量做线性变换，**token-wise 独立**。
@@ -437,26 +437,243 @@ $$
 
 ​	在考虑整个 SAN 的收敛性前，文章先独立分析了每一条路径的行为，首先是前向传播过程中残差的变化：
 $$
-\mathrm{res}(X)=X-1x^\top,\quad x=\mathrm{argmin}_x\|X-1x^\top\|
+\mathrm{res}(X)=X-1x^\top,\quad x=\mathrm{argmin}_x\|X-1x^\top\|=\frac{1}{n}1^\top X.
 $$
+这里的残差并不是指ResNet里的那种“残差连接”，他的意思是将矩阵 $X$ 投影到与“常数矩阵”**正交**的子空间上——也就是把**均值部分**去掉，只留下“不同 token 之间的差异”。本质就是**统计学里的“去均值”**：就像分析数据时先把每个样本减掉全体平均，这样可以看到真正的“样本间差异”而不受整体偏移影响。
+
 根据以下定理，残差范数会以惊人的速度（以立方速率双指数级）收敛至零（证明略）：
 
 对任意由 $L$ 层纯单头自注意力（SAN）堆叠而成的网络，假设每层权重满足：
 $$
 \|W_Q^\ell\|_1\|W_K^\ell\|_1\|W_V^\ell\|_{1,\infty}\leq\beta,
 $$
-其中 **$\|A\|_{1,\infty}=\sqrt{\|A\|_1\|A\|_\infty}$** 便于同时约束、控制行和列尺度：
+其中 **$\|A\|_{1,\infty}=\sqrt{\|A\|_1\|A\|_\infty}$** ，其便于同时约束**行和列尺度**，控制 softmax 里“列尺度失衡”导致的极端注意力分配，同时保证行随机矩阵乘积仍然收敛：
 
-| 矩阵范数   | 公式                                                         | 直观含义                                       |
-| ---------- | ------------------------------------------------------------ | ---------------------------------------------- |
-| **1-范数** | $\displaystyle\boxed{\;\lVert A\rVert_{1} \;=\; \max_{1\le j\le n}\;\sum_{i=1}^{m}\lvert a_{ij}\rvert\;}$ | 把 **每一列** 的绝对值相加，再取其中*最大列和* |
-| **∞-范数** | $\displaystyle\boxed{\;\lVert A\rVert_{\infty} \;=\; \max_{1\le i\le m}\;\sum_{j=1}^{n}\lvert a_{ij}\rvert\;}$ | 把 **每一行** 的绝对值相加，再取其中*最大行和* |
+| 矩阵范数   | 公式                                                         | 直观含义                                         |
+| ---------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| **1-范数** | $\displaystyle\boxed{\;\lVert A\rVert_{1} \;=\; \max_{1\le j\le n}\;\sum_{i=1}^{m}\lvert a_{ij}\rvert\;}$ | 把 **每一列** 的绝对值相加，再取其中*最大列和*。 |
+| **∞-范数** | $\displaystyle\boxed{\;\lVert A\rVert_{\infty} \;=\; \max_{1\le i\le m}\;\sum_{j=1}^{n}\lvert a_{ij}\rvert\;}$ | 把 **每一行** 的绝对值相加，再取其中*最大行和*。 |
 
+并令 $\gamma$ 表示与注意力 logits 相关的常数（衡量 softmax 误差），则输出的残差满足：
+$$
+\|res(SAN(\boldsymbol{X}))\|_{1,\infty}\leq\left(\frac{4\gamma\beta}{\sqrt{d_{qk}}}\right)^{\frac{3^{L}-1}{2}}\|res(\boldsymbol{X})\|_{1,\infty}^{3^{L}},\tag{1}
+$$
+这相当于向秩为1的矩阵进行双重指数收敛：
 
+- 左侧 $\|\operatorname{res}(\mathrm{SAN}(X))\|$ 是网络输出去掉“常数方向”后的部分。
+- 右侧包含两部分因子：
+  1. $\bigl(\tfrac{4\gamma\beta}{\sqrt{d_{qk}}}\bigr)^{\tfrac{3L-1}{2}}$：随着深度 $L$ 指数增长的常数前因子；
+  2. $\|\operatorname{res}(X)\|^{3^L}$：残差范数被“立方再立方…（共 $L$ 次）”的幂塔摧毁。只要初始残差 $\|\operatorname{res}(X_0)\|<1$，输出残差几乎瞬间跌到 0——**比普通行随机矩阵乘积（线性收敛）要快得多**。
 
+​	要使上述公式右侧能保证收敛（即最终输出真的趋近 rank-1）需要：
+$$
+\frac{4\gamma\beta}{\sqrt{d_{qk}}}\;<\;1
+  \quad\Longleftrightarrow\quad
+  4\gamma\beta \;<\;\sqrt{d_{qk}}.
+$$
+其中$\beta$ 控制权重大小，$\gamma$ 控制 logits 误差，$\sqrt{d_{qk}}$ 是 softmax 的缩放，“分母越大”越能抑制注意力误差。
 
+### 3  对于完整 SAN 的指数级收敛
 
+​	现在继续分析每层具有多个头的 SAN 的收敛性。具体结论如下（证明略）：
 
+​	对一个 **深度为 $L$、宽度为 $H$**（即每层 $H$ 个头）、且 **无残差跳接** 的纯自注意力网络，若对所有层 $l$ 和头 $h$ 都有：
+$$
+\bigl\|W^{\ell}_{QK,h}\bigr\|_1\;\bigl\|W^{\ell}_{V,h}\bigr\|_{1,\infty}\le\beta,
+$$
+令 $\gamma$ 表示与注意力 logits 相关的误差项，则其输出残差满足：
+$$
+ \bigl\|\mathrm{res}\bigl(\mathrm{SAN}(X)\bigr)\bigr\|_{1,\infty}
+ \;\le\;
+ \Bigl(\tfrac{4\,\gamma\,\beta\,H}{\sqrt{d_{qk}}}\Bigr)^{\frac{3L-1}{2}}
+ \;\bigl\|\mathrm{res}(X)\bigr\|_{1,\infty}^{\,3^L}.
+$$
+与$(1)$相比，公式多出了一个常数 $H$，源自每层有 $H$ 条并行路径，将原来的 $\tfrac{4\gamma\beta}{\sqrt{d_{qk}}}$ 放大为 $\tfrac{4\gamma\beta\,H}{\sqrt{d_{qk}}}$。类似的，只要满足：
+$$
+4\,\gamma\,\beta\,H\;<\;\sqrt{d_{qk}},
+$$
+  输出残差就 **以双指数速率** 收敛到 0，网络输出矩阵退化为 rank-1。
 
+### 4  对抗秩崩坏的策略
 
+​	那么当注意力机制退化为**随深度呈双重指数增长的秩1矩阵**时，基于注意力的网络为何仍能保持实际应用效果？文章聚焦于transformer架构，通过整合该架构特有的结构（如：跳跃连接、MLP）来拓展分析维度。文章采用系统化的方法，逐步对 SAN 架构进行改进，针对每种情况，重新推导收敛边界：
 
+#### 4.1  跳跃连接（Skip connections）
+
+​	原本不考虑跳跃连接时，每层必有头 $h\in[H]$，路径都是长为 $L$ 的序列 $(h_1,\dots,h_L)$。有了跳跃连接（skip connection）后，我们用 $h_l=0$ 来表示“在第 $\ell$ 层跳过该层”（即直接把输入传到下一层，不经过任何注意力头或权重）。同时规定：
+$$
+P^{}_{0}=I,\quad W^{}_{0}=I,
+$$
+也就是当跳过时，既不做行随机平均，也不做通道变换。这样原输出可以写作：
+$$
+X^L \;=\;\sum_{h_1,\dots,h_L\in\{0,1,\dots,H\}}
+\bigl(P^L_{h_L}\cdots P^1_{h_1}\bigr)\;X\;\bigl(W^1_{h_1}\cdots W^L_{h_L}\bigr).
+$$
+​	 设 $\mathcal P_\ell$ 是“恰好走了 $\ell$ 层注意力”的路径集合，则：
+$$
+|\mathcal P_\ell|\;=\;\binom{L}{\ell}\;H^\ell.
+$$
+且$\sum_{\ell=0}^L\binom{L}{\ell}H^\ell=(1+H)^L$，比原先的 $H^L$ 大得多。跳跃连接让网络除了“全走注意力”的长路径，还保留了大量“少走注意力”的短路径，极大地丰富了网络的信息通道。
+
+​	因为带有跳跃连接的 SAN 不会出现秩坍缩现象，我们可以通过证明其下界来反映其实际意义：
+
+利用路径分解，总能找到一条“跳过所有层”的路径——即长度为 0 的路径，它保留了最初的残差 $\mathrm{res}(X)$。因此，对于任何参数化方式，只要它使得 SAN 各层的输出与输入正交，都必然满足
+$$
+\bigl\|\mathrm{res}(X^L)\bigr\|\;\ge\;\bigl\|\mathrm{res}(X)\bigr\|.
+$$
+
+一个最简单的例子是，对所有层 $l=1,\dots,L$ 都令 $W_V^l=0$，此时自注意力层没有任何非平凡贡献，残差完全保持不变，即
+
+$$
+\bigl\|\mathrm{res}(X^L)\bigr\|\;=\;\bigl\|\mathrm{res}(X)\bigr\|.
+$$
+
+> **故对任意深度 $L$、宽度 $H$ 且带 skip connections 的 SAN，都存在“无限多”参数配置，使得**
+> $$
+> \|\mathrm{res}(X^L)\|\;\ge\;\|\mathrm{res}(X)\|.
+> $$
+> **即使 $L\to\infty$，只要你选择这些特殊配置，输出残差也不会减小。**
+
+#### 4.2  **Multi-layer perceptions (MLP)**
+
+​	文章接下来研究使用多层感知机（MLP）会如何影响残差，将每一层拓展为先做多头注意力再过一个小型的 MLP（加上偏置）：
+$$
+X^{\ell+1}
+=f_\ell\Bigl(\underbrace{\sum_{h=1}^H P_h\,X^\ell\,W_h}_{\text{多头注意力}}\Bigr).
+$$
+这里 $f_\ell$ 同时承担了 **MLP** 本身（通常是两层线性+非线性激活）和输出的偏置项。$f_\ell$ 因为由有界线性变换和有界激活构成，所以对矩阵范数 $\|\cdot\|_{1,\infty}$ **是 Lipschitz 连续** 的。
+
+​	定义 $\lambda_{\ell,1,\infty}$ 为第 $\ell$ 层 MLP $f_\ell$ 在 $\|\cdot\|_{1,\infty}$ 下的 **Lipschitz 常数**：
+$$
+\|f_\ell(Z_1)-f_\ell(Z_2)\|_{1,\infty}
+  \;\le\;\lambda_{\ell,1,\infty}\,\|Z_1-Z_2\|_{1,\infty}.
+$$
+为了简化，假设所有层的 Lipschitz 常数都不超过同一个上界 $\lambda$：$\lambda_{\ell,1,\infty}\le\lambda$ 对所有 $\ell$ 成立。
+
+​	考虑一个深度为 $L$、每层具有 $H$ 个头且在每层后都接入一个 MLP 的自注意力网络。假设对所有头 $h\in[H]$ 和层 $ \ell\in[L]$，都有：
+$$
+\bigl\|W^{{\ell}}_{QK,h}\bigr\|_1\;\bigl\|W^{{\ell}}_{V,h}\bigr\|_{1,\infty}\;\le\;\beta,
+$$
+令 $\gamma$ 为与注意力条目相关的常数项，则网络在第 $L$ 层输出的残差（去掉常数方向后的部分）满足：
+$$
+\bigl\|\mathrm{res}(X^L)\bigr\|_{1,\infty}
+\;\le\;
+\Bigl(\frac{4\,\gamma\,\beta\,H\,\lambda}{\sqrt{d_{qk}}}\Bigr)^{\frac{3^{L}-1}{2}}
+\;\bigl\|\mathrm{res}(X)\bigr\|_{1,\infty}^{\,3^{L}}.
+$$
+这意味着，只要：$\displaystyle4\,\gamma\,\beta\,H\,\lambda < \sqrt{d_{qk}}$，残差就会以**双指数**速率衰减到 0。
+
+如上所见，**尽管 MLP 的作用不及跳跃连接那样彻底**，但MLP 的 Lipschitz 常数 $\lambda$ **直接控制了收敛速度**——MLP 越“强”（$\lambda$ 越大），残差衰减得就越慢。这揭示了自注意力层与 MLP 之间的“拉锯战”：注意力层在不断抹平差异，而 MLP 通过非线性有助于**增加秩**，两者相互抗衡。
+
+​	值得一提的是，使用 MLP 来对抗秩塌陷并非没有代价。虽然**增大 Lipschitz 常数能减慢残差收敛**，但同时也会降低模型的鲁棒性、提高对输入扰动的敏感度，并可能因梯度方差增大而使优化更加困难。
+
+### 5  实验验证
+
+​	简单编写了以下脚本，对比四种变体（纯自注意力、仅跳跃连接、仅 MLP、跳跃+MLP）在深度堆叠时残差（去均值后 Frobenius 范数）随层数的变化：
+
+```python
+import torch
+import torch.nn.functional as F
+from torch import nn
+import matplotlib.pyplot as plt
+
+torch.manual_seed(0)
+n_tokens   = 10
+d_model    = 128
+depth      = 12
+n_heads    = 1
+batch_size = 32
+
+def residual_fro_norm(X: torch.Tensor) -> torch.Tensor:
+    """
+    X: (B, T, D)
+    返回 size-B 的向量，每个元素是该 sample
+    去除 token 维度行均值后的 Frobenius 范数
+    """
+    mu = X.mean(dim=1, keepdim=True)
+    R  = X - mu
+    return R.flatten(1).norm(p='fro', dim=1)
+
+class TransformerBlock(nn.Module):
+    """
+    Pre-Norm Transformer block = LayerNorm → MHA → (optional) MLP → Skip
+    """
+    def __init__(self, d_model: int, n_heads: int, use_mlp: bool, use_skip: bool):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(d_model)
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=n_heads,
+            batch_first=True,
+            bias=False,
+            add_bias_kv=False,
+            add_zero_attn=False,
+        )
+        self.use_mlp = use_mlp
+        self.use_skip = use_skip
+        if use_mlp:
+            self.ln2 = nn.LayerNorm(d_model)
+            self.fc1 = nn.Linear(d_model, d_model)
+            self.fc2 = nn.Linear(d_model, d_model)
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        Z = self.ln1(X)
+        attn_out, _ = self.self_attn(Z, Z, Z)
+        Y = attn_out
+        if self.use_mlp:
+            U = self.ln2(Y)
+            Y = self.fc2(F.relu(self.fc1(U)))
+        if self.use_skip:
+            Y = Y + X
+        return Y
+
+def run_experiment(use_skip: bool, use_mlp: bool):
+    blocks = nn.ModuleList([
+        TransformerBlock(d_model, n_heads, use_mlp, use_skip)
+        for _ in range(depth)
+    ])
+    X = torch.randn(batch_size, n_tokens, d_model)
+    norms = []
+    norms.append(residual_fro_norm(X))
+    for blk in blocks:
+        X = blk(X)
+        norms.append(residual_fro_norm(X))
+    return torch.stack(norms, dim=0)
+
+if __name__ == "__main__":
+    variants = {
+        'SAN only':    (False, False),
+        'Skip only':   (True,  False),
+        'MLP only':    (False, True),
+        'Skip + MLP':  (True,  True),
+    }
+
+    all_norms = {}
+    for name, (skip, mlp) in variants.items():
+        vals = run_experiment(skip, mlp)
+        all_norms[name] = vals.mean(dim=1)
+
+    plt.figure(figsize=(6,4))
+    for label, curve in all_norms.items():
+        plt.plot(curve.detach().numpy(), marker='o', label=label)
+    plt.xlabel("Layer")
+    plt.ylabel("Residual Frobenius norm")
+    plt.title("Rank collapse in pure SAN vs skip vs MLP vs full Transformer")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("collapse_optimized.png", dpi=300)
+    plt.show()
+```
+
+<img src="./assets/image-20250709200441641.png" alt="image-20250709200441641" style="zoom:30%;" />
+
+<center style="color:#C0C0C0">图8 四种变体在深度堆叠时残差随层数的变化（其中橙色的Skip Only被红色的Skip+MLP覆盖了）</center>
+
+​	在**纯自注意力网络（SAN only）** 中，如理论所说，残差范数在第一层便急剧下降——从初始的约 34 快速滑落至接近 0，并在后续全部层几乎保持为 0。这充分验证了去除跳跃连接与 MLP 后，纯注意力机制在深度堆叠时会以双指数速率抹平 token 之间的差异，最终输出退化为近乎 rank-1 矩阵。
+
+​	对比之下，仅加入**跳跃连接（Skip only）** 能够将残差稳稳地“传导”到每一层：残差范数从初始的 34 左右略微震荡，但始终保持在同一水平线上，不发生衰减。这个现象直观地说明，空路径（length-0 path）构成的恒等映射切实阻止了注意力层对残差的压平作用，理论中的下界被逐层保留。
+
+​	在 **仅使用 MLP（MLP only）** 的设置下，残差的衰减速度相较纯 SAN 略有放缓：第一层后仍然出现明显下降，但之后在两三层内便降至接近 0。MLP 的非线性和增秩能力在一定程度上减缓了注意力带来的 rank collapse，但由于缺乏持续的跳跃通道，它依然无法根本阻止双指数级的残差消亡。
+
+​	最后，**完整 Transformer Block（Skip + MLP）** 同时拥有跳跃连接和 MLP，在实验证明中表现最佳：残差范数不仅不衰减，反而随着层数微微上升，稳定维持在原始水平之上。这里 MLP 对残差的“注入”与跳跃连接的“保留”协同作用，使得网络既能保持深层特征的多样性，又避免了纯注意力的塌陷，完美契合我们在理论中关于“跳跃连接提供下界，MLP提升秩”的推导。
